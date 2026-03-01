@@ -57,10 +57,10 @@ struct Args {
     initial_temp: f64,
 
     /// Geometric cooling rate: T_{i+1} = T_i * cooling_rate.
-    /// Should be close to 1; with 100K iterations, 0.9999 cools from
-    /// T₀ to ~T₀/22000.
-    #[arg(long, default_value_t = 0.9999)]
-    cooling_rate: f64,
+    /// If not specified, computed as exp(-10 / iterations) so that
+    /// T_final ≈ T₀ · e⁻¹⁰ regardless of iteration count.
+    #[arg(long)]
+    cooling_rate: Option<f64>,
 
     /// Start from random constants instead of current library values
     #[arg(long)]
@@ -326,7 +326,7 @@ fn neighbor_constants(c1: u64, c2: u64, k: u32, rng: &mut SmallRng) -> (u64, u64
 /// combinations), and the best shifts for the given constants are selected.
 ///
 /// Returns `(best_params, best_score, initial_score)`.
-fn optimize_k(k: u32, args: &Args, rng: &mut SmallRng) -> (Params, f64, f64) {
+fn optimize_k(k: u32, args: &Args, cooling_rate: f64, rng: &mut SmallRng) -> (Params, f64, f64) {
     // Seed pairs for evaluation: 3 fixed degenerate pairs that stress-test the
     // mixer (trivial seed additions), plus user-specified random pairs.
     let mut seed_pairs: Vec<(u64, u64)> = vec![(0, 0), (0, 1), (1, 0)];
@@ -387,7 +387,7 @@ fn optimize_k(k: u32, args: &Args, rng: &mut SmallRng) -> (Params, f64, f64) {
         }
 
         // Geometric cooling.
-        temp *= args.cooling_rate;
+        temp *= cooling_rate;
 
         // Progress logging every 1000 iterations and at the end.
         if (i + 1) % 1000 == 0 || i + 1 == args.iterations {
@@ -431,10 +431,17 @@ fn main() {
     assert!(max_k <= 64, "max-k must be at most 64");
     assert!(min_k <= max_k, "min-k must be <= max-k");
 
+    // Compute cooling rate so that T_final ≈ T₀ * e^{-10} regardless of
+    // iteration count. User-specified value takes precedence.
+    let cooling_rate = args.cooling_rate.unwrap_or_else(|| {
+        (-10.0 / args.iterations as f64).exp()
+    });
+    eprintln!("cooling_rate={cooling_rate:.10}");
+
     let mut results: Vec<(u32, Params, f64, f64)> = Vec::new();
 
     for k in min_k..=max_k {
-        let (best, best_score, initial_score) = optimize_k(k, &args, &mut rng);
+        let (best, best_score, initial_score) = optimize_k(k, &args, cooling_rate, &mut rng);
         println!(
             "k={:2}: s=({},{},{}) C1=0x{:x}, C2=0x{:x}  score={:.6}  (was {:.6})",
             k, best.s1, best.s2, best.s3, best.c1, best.c2, best_score, initial_score
