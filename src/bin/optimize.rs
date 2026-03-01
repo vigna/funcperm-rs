@@ -109,6 +109,7 @@ fn apply(x: u64, seed0: u64, seed1: u64, mask: u64, p: &Params) -> u64 {
     z ^ (z >> p.s3)
 }
 
+
 /// Returns the range of shifts to try: [k/2 - 2, k/2 + 2] clamped to [1, k-1].
 /// At most 5^3 = 125 shift combinations.
 fn shift_range(k: u32) -> (u32, u32) {
@@ -145,14 +146,23 @@ fn count_bits(n: u64) -> usize {
 /// Word `i` holds the i-th bit of the running count for all k output
 /// positions packed in parallel. After accumulation, the count for output
 /// bit `j` is reconstructed by gathering bit `j` from each counter word.
-fn evaluate_one(k_usize: usize, mask: u64, p: &Params, seed0: u64, seed1: u64, num_inputs: u64) -> f64 {
-    // Number of bits needed to hold counts up to num_inputs.
+///
+/// The caller provides a pre-allocated `counters` buffer (length ≥ k ×
+/// num_cbits) that is zeroed at the start of each call, avoiding repeated
+/// heap allocation across seed pairs within a shift triple.
+fn evaluate_one(
+    k_usize: usize,
+    mask: u64,
+    p: &Params,
+    seed0: u64,
+    seed1: u64,
+    num_inputs: u64,
+    counters: &mut [u64],
+) -> f64 {
     let num_cbits = count_bits(num_inputs);
 
-    // Flat array of vertical counters: k input bits × num_cbits counter words.
-    // counters[b * num_cbits + i] holds the i-th bit-plane of the flip count
-    // for input bit b across all k output bits simultaneously.
-    let mut counters = vec![0u64; k_usize * num_cbits];
+    // Zero the caller-provided buffer.
+    counters[..k_usize * num_cbits].fill(0);
 
     for x in 0..num_inputs {
         let fx = apply(x, seed0, seed1, mask, p);
@@ -243,17 +253,25 @@ fn evaluate_best_shifts(
     // ordering, so AtomicU64::fetch_min works correctly.
     let shared_best = AtomicU64::new(f64::INFINITY.to_bits());
 
+    // Pre-compute buffer size for evaluate_one: k × num_cbits u64 words.
+    let num_cbits = count_bits(num_inputs);
+    let buf_len = k_usize * num_cbits;
+
     // Evaluate each shift triple in parallel. Within each triple, iterate
     // seeds sequentially so we can early-terminate when the worst-case
-    // score exceeds the shared best.
+    // score exceeds the shared best. Each thread allocates its counter
+    // buffer once and reuses it across seed pairs.
     let results: Vec<(f64, u32, u32, u32)> = shift_triples
         .par_iter()
         .map(|&(s1, s2, s3)| {
             let p = Params { s1, s2, s3, c1, c2 };
             let mut worst_score = 0.0f64;
+            let mut counters = vec![0u64; buf_len];
 
             for &(seed0, seed1) in seed_pairs {
-                let score = evaluate_one(k_usize, mask, &p, seed0, seed1, num_inputs);
+                let score = evaluate_one(
+                    k_usize, mask, &p, seed0, seed1, num_inputs, &mut counters,
+                );
                 worst_score = worst_score.max(score);
 
                 // Early termination: if this triple's worst-case already
