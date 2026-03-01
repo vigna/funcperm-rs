@@ -3,6 +3,19 @@ name = "funcperm"
 version = "0.1.0"
 edition = "2021"
 
+[dependencies]
+clap = { version = "4", features = ["derive"], optional = true }
+rand = { version = "0.10", optional = true }
+rayon = { version = "1", optional = true }
+getrandom = { version = "0.3", optional = true }
+
+[features]
+optimize = ["dep:clap", "dep:rand", "dep:rayon", "dep:getrandom"]
+
+[[bin]]
+name = "optimize"
+required-features = ["optimize"]
+
 [dev-dependencies]
 rand = "0.10.0"
 criterion = { version = "0.5", features = ["html_reports"] }
