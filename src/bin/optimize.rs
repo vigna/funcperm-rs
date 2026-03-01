@@ -50,12 +50,14 @@ struct Args {
     #[arg(long, default_value_t = 100000)]
     iterations: u64,
 
-    /// Initial SA temperature
-    #[arg(long, default_value_t = 0.01)]
+    /// Initial SA temperature (higher = more exploration early on)
+    #[arg(long, default_value_t = 1.0)]
     initial_temp: f64,
 
-    /// Geometric cooling rate: T_{i+1} = T_i * cooling_rate
-    #[arg(long, default_value_t = 0.99999)]
+    /// Geometric cooling rate: T_{i+1} = T_i * cooling_rate.
+    /// Should be close to 1; with 100K iterations, 0.9999 cools from
+    /// T₀ to ~T₀/22000.
+    #[arg(long, default_value_t = 0.9999)]
     cooling_rate: f64,
 
     /// Start from random constants instead of current library values
@@ -105,28 +107,25 @@ fn apply(x: u64, seed0: u64, seed1: u64, mask: u64, p: &Params) -> u64 {
     (z ^ (z >> p.s3)) & mask
 }
 
-/// Compute the SAC (Strict Avalanche Criterion) score for a candidate
-/// parameter set.
-///
-/// For each seed pair (parallelized via rayon), we build a k×k bias matrix
-/// where entry `[b][j]` = `|flip_rate - 0.5|`, measuring how far the
-/// probability of output bit j flipping (when input bit b is flipped)
-/// deviates from the ideal 0.5.
-///
-/// Per-seed score = mean(bias) + max(bias). Lower is better (0 = perfect
-/// avalanche). The overall fitness is the **max** score across all seed
-/// pairs, ensuring worst-case robustness.
-fn evaluate(k: u32, p: &Params, seed_pairs: &[(u64, u64)], num_inputs: u64) -> f64 {
-    if k == 0 {
-        return 0.0;
-    }
+/// Returns the range of shifts to try: [k/2 - 3, k/2 + 3] clamped to [1, k-1].
+fn shift_range(k: u32) -> (u32, u32) {
+    let max_shift = k.saturating_sub(1).max(1);
+    let half = k as i32 / 2;
+    let lo = (half - 3).max(1) as u32;
+    let hi = (half + 3).min(max_shift as i32) as u32;
+    (lo, hi)
+}
 
+/// Compute the SAC (Strict Avalanche Criterion) score for a single set of
+/// parameters and seed pairs.
+///
+/// For each seed pair (parallelized via rayon), builds a k×k bias matrix
+/// where entry `[b][j]` = `|flip_rate - 0.5|`. Per-seed score =
+/// mean(bias) + max(bias). Returns the **max** score across all seed pairs
+/// (worst-case robustness). Lower is better (0 = perfect avalanche).
+fn evaluate(k: u32, p: &Params, seed_pairs: &[(u64, u64)], num_inputs: u64) -> f64 {
     let mask = mask_for_k(k);
     let k_usize = k as usize;
-    // Cap inputs at domain size: beyond 2^k, values repeat due to masking
-    // in the first step of apply().
-    let domain_size = if k == 64 { u64::MAX } else { 1u64 << k };
-    let num_inputs = num_inputs.min(domain_size);
 
     seed_pairs
         .par_iter()
@@ -171,82 +170,76 @@ fn evaluate(k: u32, p: &Params, seed_pairs: &[(u64, u64)], num_inputs: u64) -> f
         .reduce(|| 0.0f64, f64::max)
 }
 
-/// Generate the default (library) parameters for a given k.
-///
-/// Replicates the shift heuristic from `SplitMix::new` in `src/lib.rs` and
-/// truncates the library constants to k bits, preserving oddness.
-fn default_params(k: u32) -> Params {
-    let mask = mask_for_k(k);
-    let half = (k / 2).max(1);
-    let max_shift = k.saturating_sub(1).max(1);
+/// Evaluate constants (c1, c2) by exhaustively trying all shift triples in
+/// [k/2 - 3, k/2 + 3] and returning the best (lowest) score along with the
+/// optimal shifts. At most 7^3 = 343 shift combinations are tested.
+fn evaluate_best_shifts(
+    k: u32,
+    c1: u64,
+    c2: u64,
+    seed_pairs: &[(u64, u64)],
+    num_inputs: u64,
+) -> (f64, Params) {
+    let (lo, hi) = shift_range(k);
+    let mut best_score = f64::INFINITY;
+    let mut best_params = Params { s1: lo, s2: lo, s3: lo, c1, c2 };
 
-    Params {
-        s1: half,
-        s2: (half - 1).max(1),
-        s3: (half + 1).min(max_shift),
-        // LIB_C1 and LIB_C2 are already odd, but | 1 is defensive.
-        c1: (LIB_C1 & mask) | 1,
-        c2: (LIB_C2 & mask) | 1,
+    for s1 in lo..=hi {
+        for s2 in lo..=hi {
+            for s3 in lo..=hi {
+                let p = Params { s1, s2, s3, c1, c2 };
+                let score = evaluate(k, &p, seed_pairs, num_inputs);
+                if score < best_score {
+                    best_score = score;
+                    best_params = p;
+                }
+            }
+        }
     }
+
+    (best_score, best_params)
 }
 
-/// Generate random parameters for a given k.
-fn random_params(k: u32, rng: &mut SmallRng) -> Params {
+/// Generate a random (c1, c2) pair for a given k.
+fn random_constants(k: u32, rng: &mut SmallRng) -> (u64, u64) {
     let mask = mask_for_k(k);
-    let max_shift = k.saturating_sub(1).max(1);
-
-    Params {
-        s1: rng.random_range(1..=max_shift),
-        s2: rng.random_range(1..=max_shift),
-        s3: rng.random_range(1..=max_shift),
-        // | 1 ensures constants are odd (required for bijective multiplication
-        // modulo a power of 2).
-        c1: (rng.random::<u64>() & mask) | 1,
-        c2: (rng.random::<u64>() & mask) | 1,
-    }
+    // | 1 ensures constants are odd (required for bijective multiplication
+    // modulo a power of 2).
+    let c1 = (rng.random::<u64>() & mask) | 1;
+    let c2 = (rng.random::<u64>() & mask) | 1;
+    (c1, c2)
 }
 
-/// Generate a neighbor of the current parameters for simulated annealing.
-///
-/// With 80% probability, flips a random bit (not bit 0, to preserve oddness)
-/// in either C1 or C2. With 20% probability, adjusts a random shift by ±1.
-fn neighbor(p: &Params, k: u32, rng: &mut SmallRng) -> Params {
-    // For k <= 2, there are no meaningful neighbors: shifts are stuck at 1,
-    // constants have at most 1 flippable bit, and the search space is trivial.
+/// Generate a neighbor (c1, c2) by flipping 1–4 random bits (never bit 0,
+/// to preserve oddness) across c1 and c2. Shifts are not mutated — they
+/// are determined exhaustively at evaluation time.
+fn neighbor_constants(c1: u64, c2: u64, k: u32, rng: &mut SmallRng) -> (u64, u64) {
     if k <= 2 {
-        return *p;
+        return (c1, c2);
     }
 
     let mask = mask_for_k(k);
-    let max_shift = k - 1; // k >= 3, so max_shift >= 2
-    let mut new = *p;
+    let mut new_c1 = c1;
+    let mut new_c2 = c2;
 
-    if rng.random::<f64>() < 0.8 {
-        // Flip a random bit in C1 or C2, excluding bit 0 to keep it odd.
+    let num_flips = rng.random_range(1..=4u32);
+    for _ in 0..num_flips {
         let bit_pos = rng.random_range(1..k);
         if rng.random::<bool>() {
-            new.c1 ^= 1u64 << bit_pos;
+            new_c1 ^= 1u64 << bit_pos;
         } else {
-            new.c2 ^= 1u64 << bit_pos;
-        }
-        // Defensive masking (bit_pos < k, so the flip is already in range).
-        new.c1 &= mask;
-        new.c2 &= mask;
-    } else {
-        // Adjust a random shift by ±1, clamped to [1, k-1].
-        let which = rng.random_range(0..3u32);
-        let delta: i32 = if rng.random::<bool>() { 1 } else { -1 };
-        match which {
-            0 => new.s1 = (new.s1 as i32 + delta).clamp(1, max_shift as i32) as u32,
-            1 => new.s2 = (new.s2 as i32 + delta).clamp(1, max_shift as i32) as u32,
-            _ => new.s3 = (new.s3 as i32 + delta).clamp(1, max_shift as i32) as u32,
+            new_c2 ^= 1u64 << bit_pos;
         }
     }
 
-    new
+    (new_c1 & mask, new_c2 & mask)
 }
 
 /// Run simulated annealing for a single bit size k.
+///
+/// SA searches over (C1, C2) only. At each evaluation, all shift triples
+/// in [k/2 - 3, k/2 + 3] are tried exhaustively (at most 7^3 = 343
+/// combinations), and the best shifts for the given constants are selected.
 ///
 /// Returns `(best_params, best_score, initial_score)`.
 fn optimize_k(k: u32, args: &Args, rng: &mut SmallRng) -> (Params, f64, f64) {
@@ -257,41 +250,53 @@ fn optimize_k(k: u32, args: &Args, rng: &mut SmallRng) -> (Params, f64, f64) {
         seed_pairs.push((rng.random(), rng.random()));
     }
 
-    // Choose starting point: library defaults or random.
-    let mut current = if args.random_start {
-        random_params(k, rng)
+    // Cap inputs at domain size.
+    let domain_size = if k == 64 { u64::MAX } else { 1u64 << k };
+    let num_inputs = args.num_inputs.min(domain_size);
+
+    // Choose starting constants: library defaults or random.
+    let (mut cur_c1, mut cur_c2) = if args.random_start {
+        random_constants(k, rng)
     } else {
-        default_params(k)
+        let mask = mask_for_k(k);
+        ((LIB_C1 & mask) | 1, (LIB_C2 & mask) | 1)
     };
 
+    // Evaluate starting constants with exhaustive shift search.
+    let (initial_score, initial_params) =
+        evaluate_best_shifts(k, cur_c1, cur_c2, &seed_pairs, num_inputs);
+
     eprintln!(
-        "k={:2}: start s=({},{},{}) C1=0x{:x}, C2=0x{:x}{}",
-        k, current.s1, current.s2, current.s3, current.c1, current.c2,
+        "k={:2}: start s=({},{},{}) C1=0x{:x}, C2=0x{:x}  score={:.6}{}",
+        k, initial_params.s1, initial_params.s2, initial_params.s3,
+        cur_c1, cur_c2, initial_score,
         if args.random_start { " (random)" } else { " (library)" }
     );
 
-    let initial_score = evaluate(k, &current, &seed_pairs, args.num_inputs);
     let mut current_score = initial_score;
-    let mut best = current;
-    let mut best_score = current_score;
+    let mut best = initial_params;
+    let mut best_score = initial_score;
     let mut accepted = 0u64;
     let mut improved = 0u64;
 
     let mut temp = args.initial_temp;
 
     for i in 0..args.iterations {
-        let candidate = neighbor(&current, k, rng);
-        let candidate_score = evaluate(k, &candidate, &seed_pairs, args.num_inputs);
+        // Mutate only the constants; shifts will be found exhaustively.
+        let (cand_c1, cand_c2) = neighbor_constants(cur_c1, cur_c2, k, rng);
+        let (cand_score, cand_params) =
+            evaluate_best_shifts(k, cand_c1, cand_c2, &seed_pairs, num_inputs);
 
         // Standard Metropolis acceptance: always accept improvements,
         // accept worsening moves with probability exp(-delta/T).
-        let delta = candidate_score - current_score;
+        let delta = cand_score - current_score;
         if delta < 0.0 || rng.random::<f64>() < (-delta / temp).exp() {
-            current = candidate;
-            current_score = candidate_score;
+            cur_c1 = cand_c1;
+            cur_c2 = cand_c2;
+            current_score = cand_score;
             accepted += 1;
             if current_score < best_score {
-                best = current;
+                best = cand_params;
                 best_score = current_score;
                 improved += 1;
             }
