@@ -19,6 +19,7 @@ required-features = ["optimize"]
 [dev-dependencies]
 rand = "0.10.0"
 criterion = { version = "0.5", features = ["html_reports"] }
+statrs = "0.18"
 anyhow = "1"
 
 [[bench]]
