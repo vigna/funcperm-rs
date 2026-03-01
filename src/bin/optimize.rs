@@ -116,63 +116,49 @@ fn shift_range(k: u32) -> (u32, u32) {
     (lo, hi)
 }
 
-/// Compute the SAC (Strict Avalanche Criterion) score for a single set of
-/// parameters and seed pairs.
+/// Compute the SAC score for a single (params, seed-pair) combination.
 ///
-/// For each seed pair (parallelized via rayon), builds a k×k bias matrix
-/// where entry `[b][j]` = `|flip_rate - 0.5|`. Per-seed score =
-/// mean(bias) + max(bias). Returns the **max** score across all seed pairs
-/// (worst-case robustness). Lower is better (0 = perfect avalanche).
-fn evaluate(k: u32, p: &Params, seed_pairs: &[(u64, u64)], num_inputs: u64) -> f64 {
-    let mask = mask_for_k(k);
-    let k_usize = k as usize;
+/// Builds a k×k bias matrix where entry `[b][j]` = `|flip_rate - 0.5|`.
+/// Returns mean(bias) + max(bias). Lower is better (0 = perfect avalanche).
+fn evaluate_one(k_usize: usize, mask: u64, p: &Params, seed0: u64, seed1: u64, num_inputs: u64) -> f64 {
+    let mut flip_count = vec![vec![0u64; k_usize]; k_usize];
 
-    seed_pairs
-        .par_iter()
-        .map(|&(seed0, seed1)| {
-            // flip_count[b][j]: number of times output bit j flipped
-            // when input bit b was flipped, across all test inputs.
-            let mut flip_count = vec![vec![0u64; k_usize]; k_usize];
-
-            for x in 0..num_inputs {
-                // Compute f(x) once, then test each single-bit perturbation.
-                let fx = apply(x, seed0, seed1, mask, p);
-                for b in 0..k_usize {
-                    let x_flipped = x ^ (1u64 << b);
-                    let fx_flipped = apply(x_flipped, seed0, seed1, mask, p);
-                    // Each set bit in diff indicates an output bit that flipped.
-                    let diff = fx ^ fx_flipped;
-                    for j in 0..k_usize {
-                        flip_count[b][j] += (diff >> j) & 1;
-                    }
-                }
+    for x in 0..num_inputs {
+        // Compute f(x) once, then test each single-bit perturbation.
+        let fx = apply(x, seed0, seed1, mask, p);
+        for b in 0..k_usize {
+            let x_flipped = x ^ (1u64 << b);
+            let fx_flipped = apply(x_flipped, seed0, seed1, mask, p);
+            let diff = fx ^ fx_flipped;
+            for j in 0..k_usize {
+                flip_count[b][j] += (diff >> j) & 1;
             }
+        }
+    }
 
-            // Convert flip counts to bias values: |flip_rate - 0.5|.
-            // A perfect avalanche has bias = 0 everywhere.
-            let mut sum_bias = 0.0;
-            let mut max_bias: f64 = 0.0;
-            let num_entries = (k_usize * k_usize) as f64;
+    let mut sum_bias = 0.0;
+    let mut max_bias: f64 = 0.0;
+    let num_entries = (k_usize * k_usize) as f64;
 
-            for b in 0..k_usize {
-                for j in 0..k_usize {
-                    let bias =
-                        (flip_count[b][j] as f64 / num_inputs as f64 - 0.5).abs();
-                    sum_bias += bias;
-                    max_bias = max_bias.max(bias);
-                }
-            }
+    for b in 0..k_usize {
+        for j in 0..k_usize {
+            let bias = (flip_count[b][j] as f64 / num_inputs as f64 - 0.5).abs();
+            sum_bias += bias;
+            max_bias = max_bias.max(bias);
+        }
+    }
 
-            // Combine mean and max bias into a single score.
-            sum_bias / num_entries + max_bias
-        })
-        // Take the worst (maximum) score across all seed pairs.
-        .reduce(|| 0.0f64, f64::max)
+    sum_bias / num_entries + max_bias
 }
 
 /// Evaluate constants (c1, c2) by exhaustively trying all shift triples in
 /// [k/2 - 3, k/2 + 3] and returning the best (lowest) score along with the
-/// optimal shifts. At most 7^3 = 343 shift combinations are tested.
+/// optimal shifts.
+///
+/// All (shift-triple, seed-pair) combinations are evaluated in parallel
+/// (up to 343 × num_seeds work units), maximizing core utilization.
+/// For each shift triple, the score is the worst case (max) across seed
+/// pairs. The best (minimum) score across shift triples is returned.
 fn evaluate_best_shifts(
     k: u32,
     c1: u64,
@@ -181,19 +167,51 @@ fn evaluate_best_shifts(
     num_inputs: u64,
 ) -> (f64, Params) {
     let (lo, hi) = shift_range(k);
-    let mut best_score = f64::INFINITY;
-    let mut best_params = Params { s1: lo, s2: lo, s3: lo, c1, c2 };
+    let mask = mask_for_k(k);
+    let k_usize = k as usize;
 
+    // Build all shift triples.
+    let mut shift_triples: Vec<(u32, u32, u32)> = Vec::new();
     for s1 in lo..=hi {
         for s2 in lo..=hi {
             for s3 in lo..=hi {
-                let p = Params { s1, s2, s3, c1, c2 };
-                let score = evaluate(k, &p, seed_pairs, num_inputs);
-                if score < best_score {
-                    best_score = score;
-                    best_params = p;
-                }
+                shift_triples.push((s1, s2, s3));
             }
+        }
+    }
+
+    // Build all (shift_index, seed_index) work units and evaluate in parallel.
+    let num_shifts = shift_triples.len();
+    let num_seeds = seed_pairs.len();
+    let total_units = num_shifts * num_seeds;
+
+    // Each work unit computes the SAC score for one (shift-triple, seed-pair).
+    let scores: Vec<f64> = (0..total_units)
+        .into_par_iter()
+        .map(|idx| {
+            let shift_idx = idx / num_seeds;
+            let seed_idx = idx % num_seeds;
+            let (s1, s2, s3) = shift_triples[shift_idx];
+            let p = Params { s1, s2, s3, c1, c2 };
+            let (seed0, seed1) = seed_pairs[seed_idx];
+            evaluate_one(k_usize, mask, &p, seed0, seed1, num_inputs)
+        })
+        .collect();
+
+    // For each shift triple, take the max score across seed pairs (worst case).
+    // Then pick the shift triple with the minimum worst-case score.
+    let mut best_score = f64::INFINITY;
+    let mut best_params = Params { s1: lo, s2: lo, s3: lo, c1, c2 };
+
+    for (shift_idx, &(s1, s2, s3)) in shift_triples.iter().enumerate() {
+        let base = shift_idx * num_seeds;
+        let worst = scores[base..base + num_seeds]
+            .iter()
+            .cloned()
+            .fold(0.0f64, f64::max);
+        if worst < best_score {
+            best_score = worst;
+            best_params = Params { s1, s2, s3, c1, c2 };
         }
     }
 
