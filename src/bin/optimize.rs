@@ -15,6 +15,8 @@
 //!
 //! Build with: `cargo run --bin optimize --features optimize --release -- [OPTIONS]`
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use clap::Parser;
 use rand::rngs::SmallRng;
 use rand::{RngExt, SeedableRng};
@@ -104,45 +106,93 @@ fn apply(x: u64, seed0: u64, seed1: u64, mask: u64, p: &Params) -> u64 {
     let z = (z ^ (z >> p.s1)).wrapping_mul(p.c1) & mask;
     let z = z.wrapping_add(seed1) & mask;
     let z = (z ^ (z >> p.s2)).wrapping_mul(p.c2) & mask;
-    (z ^ (z >> p.s3)) & mask
+    z ^ (z >> p.s3)
 }
 
-/// Returns the range of shifts to try: [k/2 - 3, k/2 + 3] clamped to [1, k-1].
+/// Returns the range of shifts to try: [k/2 - 2, k/2 + 2] clamped to [1, k-1].
+/// At most 5^3 = 125 shift combinations.
 fn shift_range(k: u32) -> (u32, u32) {
     let max_shift = k.saturating_sub(1).max(1);
     let half = k as i32 / 2;
-    let lo = (half - 3).max(1) as u32;
-    let hi = (half + 3).min(max_shift as i32) as u32;
+    let lo = (half - 2).max(1) as u32;
+    let hi = (half + 2).min(max_shift as i32) as u32;
     (lo, hi)
+}
+
+/// Number of bits needed to represent the value `n` (i.e., floor(log2(n)) + 1).
+fn count_bits(n: u64) -> usize {
+    if n == 0 {
+        1
+    } else {
+        (64 - n.leading_zeros()) as usize
+    }
 }
 
 /// Compute the SAC score for a single (params, seed-pair) combination.
 ///
 /// Builds a k×k bias matrix where entry `[b][j]` = `|flip_rate - 0.5|`.
 /// Returns mean(bias) + max(bias). Lower is better (0 = perfect avalanche).
+///
+/// Uses vertical bit counters (carry-save / ripple-carry addition) to
+/// accumulate flip counts across all k output bits simultaneously. Each
+/// `diff` word has one bit per output position; instead of extracting each
+/// bit individually (O(k) per diff), we add the entire k-wide word into a
+/// vertical counter in O(num_cbits) amortized — typically ~14 for
+/// num_inputs=10000. For k=64 this is a ~4× speedup on the inner loop.
+///
+/// The vertical counter for input bit `b` is stored as `num_cbits` words
+/// in a flat array at `counters[b * num_cbits .. (b+1) * num_cbits]`.
+/// Word `i` holds the i-th bit of the running count for all k output
+/// positions packed in parallel. After accumulation, the count for output
+/// bit `j` is reconstructed by gathering bit `j` from each counter word.
 fn evaluate_one(k_usize: usize, mask: u64, p: &Params, seed0: u64, seed1: u64, num_inputs: u64) -> f64 {
-    let mut flip_count = vec![vec![0u64; k_usize]; k_usize];
+    // Number of bits needed to hold counts up to num_inputs.
+    let num_cbits = count_bits(num_inputs);
+
+    // Flat array of vertical counters: k input bits × num_cbits counter words.
+    // counters[b * num_cbits + i] holds the i-th bit-plane of the flip count
+    // for input bit b across all k output bits simultaneously.
+    let mut counters = vec![0u64; k_usize * num_cbits];
 
     for x in 0..num_inputs {
-        // Compute f(x) once, then test each single-bit perturbation.
         let fx = apply(x, seed0, seed1, mask, p);
         for b in 0..k_usize {
             let x_flipped = x ^ (1u64 << b);
             let fx_flipped = apply(x_flipped, seed0, seed1, mask, p);
             let diff = fx ^ fx_flipped;
-            for j in 0..k_usize {
-                flip_count[b][j] += (diff >> j) & 1;
+
+            // Ripple-carry add: add `diff` (a k-wide bit vector) into the
+            // vertical counter for input bit b. Each iteration propagates
+            // the carry to the next bit-plane. On average only ~2 iterations
+            // are needed because carry dies out quickly.
+            let base = b * num_cbits;
+            let mut carry = diff;
+            for i in 0..num_cbits {
+                if carry == 0 {
+                    break;
+                }
+                let new_carry = counters[base + i] & carry;
+                counters[base + i] ^= carry;
+                carry = new_carry;
             }
         }
     }
 
+    // Extract flip counts from vertical counters and compute bias.
     let mut sum_bias = 0.0;
     let mut max_bias: f64 = 0.0;
     let num_entries = (k_usize * k_usize) as f64;
 
     for b in 0..k_usize {
+        let base = b * num_cbits;
         for j in 0..k_usize {
-            let bias = (flip_count[b][j] as f64 / num_inputs as f64 - 0.5).abs();
+            // Reconstruct count for output bit j by gathering bit j from
+            // each counter word (bit-plane).
+            let mut count = 0u64;
+            for i in 0..num_cbits {
+                count |= ((counters[base + i] >> j) & 1) << i;
+            }
+            let bias = (count as f64 / num_inputs as f64 - 0.5).abs();
             sum_bias += bias;
             max_bias = max_bias.max(bias);
         }
@@ -152,13 +202,21 @@ fn evaluate_one(k_usize: usize, mask: u64, p: &Params, seed0: u64, seed1: u64, n
 }
 
 /// Evaluate constants (c1, c2) by exhaustively trying all shift triples in
-/// [k/2 - 3, k/2 + 3] and returning the best (lowest) score along with the
+/// [k/2 - 2, k/2 + 2] and returning the best (lowest) score along with the
 /// optimal shifts.
 ///
-/// All (shift-triple, seed-pair) combinations are evaluated in parallel
-/// (up to 343 × num_seeds work units), maximizing core utilization.
-/// For each shift triple, the score is the worst case (max) across seed
-/// pairs. The best (minimum) score across shift triples is returned.
+/// Shift triples are evaluated in parallel (up to 125 work units). Within
+/// each shift triple, seed pairs are evaluated sequentially with early
+/// termination: if the running worst-case score exceeds the best score
+/// found by any other shift triple so far, the remaining seeds are skipped.
+///
+/// Degenerate seed pairs (0,0), (0,1), (1,0) are placed first in the list
+/// to act as cheap pre-filters — they tend to produce the worst scores and
+/// thus trigger early termination quickly for bad shift triples.
+///
+/// The shared best score is maintained via an `AtomicU64`. Since all scores
+/// are non-negative f64, `f64::to_bits()` preserves ordering, so we can use
+/// `fetch_min` for lock-free updates.
 fn evaluate_best_shifts(
     k: u32,
     c1: u64,
@@ -180,37 +238,45 @@ fn evaluate_best_shifts(
         }
     }
 
-    // Build all (shift_index, seed_index) work units and evaluate in parallel.
-    let num_shifts = shift_triples.len();
-    let num_seeds = seed_pairs.len();
-    let total_units = num_shifts * num_seeds;
+    // Shared best score across all shift triples (for early termination).
+    // Initialized to +infinity. For non-negative f64, to_bits() preserves
+    // ordering, so AtomicU64::fetch_min works correctly.
+    let shared_best = AtomicU64::new(f64::INFINITY.to_bits());
 
-    // Each work unit computes the SAC score for one (shift-triple, seed-pair).
-    let scores: Vec<f64> = (0..total_units)
-        .into_par_iter()
-        .map(|idx| {
-            let shift_idx = idx / num_seeds;
-            let seed_idx = idx % num_seeds;
-            let (s1, s2, s3) = shift_triples[shift_idx];
+    // Evaluate each shift triple in parallel. Within each triple, iterate
+    // seeds sequentially so we can early-terminate when the worst-case
+    // score exceeds the shared best.
+    let results: Vec<(f64, u32, u32, u32)> = shift_triples
+        .par_iter()
+        .map(|&(s1, s2, s3)| {
             let p = Params { s1, s2, s3, c1, c2 };
-            let (seed0, seed1) = seed_pairs[seed_idx];
-            evaluate_one(k_usize, mask, &p, seed0, seed1, num_inputs)
+            let mut worst_score = 0.0f64;
+
+            for &(seed0, seed1) in seed_pairs {
+                let score = evaluate_one(k_usize, mask, &p, seed0, seed1, num_inputs);
+                worst_score = worst_score.max(score);
+
+                // Early termination: if this triple's worst-case already
+                // exceeds the best triple found so far, skip remaining seeds.
+                let current_best = f64::from_bits(shared_best.load(Ordering::Relaxed));
+                if worst_score >= current_best {
+                    return (f64::INFINITY, s1, s2, s3);
+                }
+            }
+
+            // This triple survived all seeds — update shared best.
+            shared_best.fetch_min(worst_score.to_bits(), Ordering::Relaxed);
+            (worst_score, s1, s2, s3)
         })
         .collect();
 
-    // For each shift triple, take the max score across seed pairs (worst case).
-    // Then pick the shift triple with the minimum worst-case score.
+    // Find the shift triple with the minimum worst-case score.
     let mut best_score = f64::INFINITY;
     let mut best_params = Params { s1: lo, s2: lo, s3: lo, c1, c2 };
 
-    for (shift_idx, &(s1, s2, s3)) in shift_triples.iter().enumerate() {
-        let base = shift_idx * num_seeds;
-        let worst = scores[base..base + num_seeds]
-            .iter()
-            .cloned()
-            .fold(0.0f64, f64::max);
-        if worst < best_score {
-            best_score = worst;
+    for &(score, s1, s2, s3) in &results {
+        if score < best_score {
+            best_score = score;
             best_params = Params { s1, s2, s3, c1, c2 };
         }
     }
@@ -256,7 +322,7 @@ fn neighbor_constants(c1: u64, c2: u64, k: u32, rng: &mut SmallRng) -> (u64, u64
 /// Run simulated annealing for a single bit size k.
 ///
 /// SA searches over (C1, C2) only. At each evaluation, all shift triples
-/// in [k/2 - 3, k/2 + 3] are tried exhaustively (at most 7^3 = 343
+/// in [k/2 - 2, k/2 + 2] are tried exhaustively (at most 5^3 = 125
 /// combinations), and the best shifts for the given constants are selected.
 ///
 /// Returns `(best_params, best_score, initial_score)`.
