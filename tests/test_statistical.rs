@@ -1,4 +1,4 @@
-use funcperm::FuncPerm;
+use funcperm::{simple_hash, splitmix};
 use rand::{RngExt, SeedableRng};
 use statrs::distribution::{ChiSquared, ContinuousCDF};
 
@@ -21,7 +21,7 @@ fn check_uniformity(n: u64, position: u64, rng: &mut rand::rngs::SmallRng) {
     let expected = num_seeds as f64 / n as f64;
 
     for _ in 0..num_seeds {
-        let perm = FuncPerm::new_splitmix(n, rng.random(), rng.random());
+        let perm = splitmix(n, rng.random(), rng.random());
         let y = perm.get(position);
         counts[y as usize] += 1;
     }
@@ -41,7 +41,7 @@ fn check_uniformity_simple_hash(n: u64, position: u64, rng: &mut rand::rngs::Sma
     let expected = num_seeds as f64 / n as f64;
 
     for _ in 0..num_seeds {
-        let perm = FuncPerm::new_simple_hash(n, rng.random(), rng.random());
+        let perm = simple_hash(n, rng.random(), rng.random());
         let y = perm.get(position);
         counts[y as usize] += 1;
     }
