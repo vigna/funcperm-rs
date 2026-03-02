@@ -80,31 +80,6 @@ pub fn splitmix(n: u64, seed0: u64, seed1: u64) -> FuncPerm<impl Fn(u64) -> u64 
     })
 }
 
-/// Simpler cycle-walking permutation on `[0..n)`.
-///
-/// One-round multiply-xorshift with three multiplications per application;
-/// faster but with weaker mixing than [`splitmix`].
-pub fn simple_hash(n: u64, seed0: u64, seed1: u64) -> FuncPerm<impl Fn(u64) -> u64 + Copy> {
-    let k = if n <= 1 {
-        0
-    } else {
-        64 - (n - 1).leading_zeros()
-    };
-    let mask = if k >= 64 { u64::MAX } else { (1u64 << k) - 1 };
-    let mul = if k == 0 {
-        0
-    } else {
-        (0x9e3779b97f4a7c15 >> (64 - k)) | 1
-    };
-    let shift = (k / 2).max(1);
-
-    FuncPerm::new(n, move |x: u64| {
-        let mut z = (x.wrapping_add(seed0)).wrapping_mul(mul);
-        z = z.wrapping_add(seed1) & mask;
-        z ^ (z >> shift)
-    })
-}
-
 #[cfg(test)]
 mod tests {
     extern crate alloc;
@@ -137,45 +112,6 @@ mod tests {
         let n = 100;
         let perm0 = splitmix(n, 0, 1);
         let perm1 = splitmix(n, 2, 3);
-        let mut different = false;
-        for x in 0..n {
-            if perm0.get(x) != perm1.get(x) {
-                different = true;
-                break;
-            }
-        }
-        assert!(
-            different,
-            "different seeds should produce different permutations"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn test_bijectivity_simple_hash() -> anyhow::Result<()> {
-        for &n in &[1u64, 2, 3, 7, 8, 100, 1000, 1 << 16] {
-            for seed in 0..3u64 {
-                let perm = simple_hash(n, seed, seed * 17);
-                let mut seen = BTreeSet::new();
-                for x in 0..n {
-                    let y = perm.get(x);
-                    assert!(y < n, "output {y} out of range [0..{n})");
-                    assert!(
-                        seen.insert(y),
-                        "duplicate output {y} for n={n}, seed={seed}"
-                    );
-                }
-                assert_eq!(seen.len() as u64, n);
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn test_different_seeds_simple_hash() -> anyhow::Result<()> {
-        let n = 100;
-        let perm0 = simple_hash(n, 0, 1);
-        let perm1 = simple_hash(n, 2, 3);
         let mut different = false;
         for x in 0..n {
             if perm0.get(x) != perm1.get(x) {
