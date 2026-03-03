@@ -26,16 +26,16 @@ impl<B> core::fmt::Debug for FuncPerm<B> {
 }
 
 impl<B> FuncPerm<B> {
-    pub fn new(n: u64, bijection: B) -> Self {
+    pub const fn new(n: u64, bijection: B) -> Self {
         assert!(n > 0, "n must be positive");
         Self { n, bijection }
     }
 
-    pub fn len(&self) -> u64 {
+    pub const fn len(&self) -> u64 {
         self.n
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         // Always false since n > 0 is enforced by the constructor.
         false
     }
