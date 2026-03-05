@@ -52,6 +52,7 @@ impl<B> FuncPerm<B> {
     /// Note that providing a function that does not satisfy the bijection
     /// requirement may lead to non-termination of the [`get`](Self::get)
     /// method.
+    #[inline]
     #[must_use]
     pub const fn new(n: u64, bijection: B) -> Self {
         Self { n, bijection }

@@ -10,7 +10,7 @@
 //! z = (z ^ (z >> s1)) * C1 & mask
 //! z = (z + seed1) & mask
 //! z = (z ^ (z >> s2)) * C2 & mask
-//! z = (z ^ (z >> s3)) & mask
+//! z = (z ^ (z >> s3))
 //! ```
 //!
 //! Build with: `cargo run --bin optimize --features optimize --release -- [OPTIONS]`

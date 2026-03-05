@@ -14,9 +14,9 @@
 //! _n_⌉). The function takes two seeds that are injected just before the first
 //! and second xorshift.
 //!
-//! Different seed pairs yield different permutations with reasonable
-//! statistical uniformity (see the tests), but they cannot guarantee uniform
-//! random sampling from the permutation space like [Feistel
+//! Different seed pairs are expected to yield different permutations with
+//! reasonable statistical uniformity (see the tests), but they cannot guarantee
+//! uniform random sampling from the permutation space like [Feistel
 //! networks](https://en.wikipedia.org/wiki/Feistel_cipher) using cryptographic
 //! functions do. In exchange, computing the mapping of an element takes just a
 //! dozen nanoseconds.
