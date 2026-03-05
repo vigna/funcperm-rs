@@ -7,10 +7,10 @@
 #![no_std]
 #![doc = include_str!("../README.md")]
 
-mod murmur;
+pub mod murmur;
 pub use murmur::murmur;
 
-/// Cycle-walking functional permutation on [0 . . *n*).
+/// Cycle-walking functional permutation on [0 . . *n*), given a bijection on [0 . . *m*), *m* ≥ *n*.
 #[derive(Clone, Copy)]
 pub struct FuncPerm<B> {
     n: u64,

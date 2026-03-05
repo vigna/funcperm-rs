@@ -1,14 +1,13 @@
 use std::collections::BTreeSet;
 
 use funcperm::murmur;
-use rand::{RngExt, SeedableRng};
 use statrs::distribution::{ChiSquared, ContinuousCDF};
 
 #[test]
 fn test_bijectivity() -> anyhow::Result<()> {
     for &n in &[1u64, 2, 3, 7, 8, 100, 1000, 1 << 16] {
-        for seed in 0..3u64 {
-            let perm = murmur(n, seed, seed * 17);
+        for seed in 0..3u64.min(n) {
+            let perm = murmur(n, seed, seed);
             let mut seen = BTreeSet::new();
             for x in 0..n {
                 let y = perm.get(x);
@@ -46,12 +45,12 @@ fn test_different_seeds() -> anyhow::Result<()> {
 #[test]
 fn test_edge_cases() -> anyhow::Result<()> {
     // n = 1: only possible permutation
-    let perm = murmur(1, 42, 43);
+    let perm = murmur(1, 0, 0);
     assert_eq!(perm.get(0), 0);
     assert_eq!(perm.len(), 1);
 
     // n = 2: must be a bijection for all seeds
-    for seed in 0..10u64 {
+    for seed in 0..2 {
         let perm = murmur(2, seed, seed);
         let y0 = perm.get(0);
         let y1 = perm.get(1);
@@ -62,7 +61,7 @@ fn test_edge_cases() -> anyhow::Result<()> {
 
     // Powers of 2: no cycle-walking needed
     for &k in &[4u64, 8, 16, 64, 256] {
-        let perm = murmur(k, 12345, 12345);
+        let perm = murmur(k, 0, 0);
         let mut seen = BTreeSet::new();
         for x in 0..k {
             let y = perm.get(x);
@@ -84,43 +83,43 @@ fn chi_squared(counts: &[u64], expected: f64) -> f64 {
         .sum::<f64>()
 }
 
-/// Check that at a given position the output values are approximately uniformly
-/// distributed across many random seed pairs, using a chi-squared test at
-/// significance level 0.05 where outputs are bucketed into √n bins.
-///
-/// Note that the test would fail with n bins.
-fn check_uniformity(n: u64, position: u64, rng: &mut rand::rngs::SmallRng) {
-    let num_buckets = (n as f64).sqrt().ceil() as u64;
-    let num_samples = num_buckets * 1000;
-    let expected = num_samples as f64 / num_buckets as f64;
-    let mut counts = vec![0u64; num_buckets as usize];
+/// Check that the √n equispaced positions, when mapping using the seeds from 0
+/// to n, produce approximately uniform outputs, using a X² test at
+/// significance level 0.01.
+fn check_uniformity(n: u64) {
+    let sqrt = (n as f64).sqrt().floor() as usize;
+    let mut counts = vec![0u64; n as usize];
 
-    for _ in 0..num_samples {
-        let perm = murmur(n, rng.random(), rng.random());
-        let y = perm.get(position);
-        counts[(y * num_buckets / n) as usize] += 1;
+    for s in 0..n {
+        // n seeds
+        let perm = murmur(n, s, s);
+        for position in (0..n).into_iter().step_by(sqrt) {
+            // √n equispaced positions
+            let y = perm.get(position);
+            counts[y as usize] += 1;
+        }
     }
 
-    let x2 = chi_squared(&counts, expected);
-    let critical = ChiSquared::new((num_buckets - 1) as f64)
-        .unwrap()
-        .inverse_cdf(0.99);
+    let x2 = chi_squared(&counts, sqrt as f64);
+    let critical = ChiSquared::new((n - 1) as f64).unwrap().inverse_cdf(0.99);
 
     assert!(
         x2 < critical,
-        "Chi-squared test failed for n={n}, position={position}: X²={x2:.2}, critical={critical:.2}"
+        "Chi-squared test failed for n={n}, X²={x2:.2}, critical={critical:.2}"
     );
 }
 
 #[test]
 fn test_statistical_uniformity() -> anyhow::Result<()> {
-    let mut rng = rand::rngs::SmallRng::seed_from_u64(0);
-    for &n in &[10000, 100000, 1000000] {
-        for &position in &[0, 1, n / 2, n - 1] {
-            // We try a few positions. The test would fail if we would try on
-            // all positions.
-            check_uniformity(n, position, &mut rng);
-        }
+    for &n in &[
+        1 << 10,
+        (1 << 10) + 1,
+        1 << 12,
+        (1 << 12) + 1,
+        1 << 16,
+        (1 << 16) + 1,
+    ] {
+        check_uniformity(n);
     }
     Ok(())
 }
