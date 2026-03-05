@@ -19,7 +19,7 @@
 //! uniform random sampling from the permutation space like [Feistel
 //! networks](https://en.wikipedia.org/wiki/Feistel_cipher) using cryptographic
 //! functions do. In exchange, computing the mapping of an element takes just a
-//! dozen nanoseconds.
+//! dozen nanoseconds (see the benchmarks).
 
 /// The constants in this file were computed by running the following code:
 ///
