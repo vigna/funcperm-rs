@@ -16,12 +16,13 @@
 //!
 //! Different seed pairs yield different permutations with reasonable
 //! statistical uniformity (see the tests), but they cannot guarantee uniform
-//! random sampling form the permutation space like [Feistel
+//! random sampling from the permutation space like [Feistel
 //! networks](https://en.wikipedia.org/wiki/Feistel_cipher) using cryptographic
 //! functions do. In exchange, computing the mapping of an element takes just a
 //! few nanoseconds.
 
-/// These constants in this file were computed by running the following code:
+// The constants in this file were computed by running the following code:
+//
 ///
 /// ```text
 /// cargo run --bin optimize --features optimize --release -- --iterations 10000 --num-seeds 100 --num-inputs 10000 --sa-seed 0 --random-start

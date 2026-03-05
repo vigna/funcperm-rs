@@ -2,7 +2,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use funcperm::murmur;
 
 fn bench_get(c: &mut Criterion) {
-    let mut group = c.benchmark_group("get_splitmix");
+    let mut group = c.benchmark_group("get_murmur");
     for &n in &[1 << 20, (1 << 20) + 1, 1 << 24, (1 << 24) + 1] {
         let perm = murmur(n, 42, 42);
         group.bench_with_input(BenchmarkId::from_parameter(n), &perm, |b, perm| {

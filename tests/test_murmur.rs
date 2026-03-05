@@ -93,7 +93,7 @@ fn check_uniformity(n: u64) {
     for s in 0..n {
         // n seeds
         let perm = murmur(n, s, s);
-        for position in (0..n).into_iter().step_by(sqrt) {
+        for position in (0..n).step_by(sqrt) {
             // √n equispaced positions
             let y = perm.get(position);
             counts[y as usize] += 1;
