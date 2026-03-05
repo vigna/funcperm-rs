@@ -228,12 +228,12 @@ const PARAMS: [(u32, u32, u32, u64, u64); 64] = [
 
 /// MurmurHash3-based functional permutation on [0 . . *n*).
 ///
-/// Each pair of seeds will provide a different permutation.
+/// Each pair of seeds is expected to provide a different permutation.
 /// See the [module-level documentation](self) for details and caveats.
 ///
 /// # Panics
 ///
-/// Panics if `seed0` or `seed1` is not smaller than 2*ᵏ*, where _k_ = ⌈lg _n_⌉.
+/// Panics if `seed0` or `seed1` is ≥ 2*ᵏ*, where _k_ = ⌈lg _n_⌉.
 ///
 /// # Examples
 ///
@@ -279,6 +279,6 @@ pub fn murmur(n: u64, seed0: u64, seed1: u64) -> crate::FuncPerm<impl Fn(u64) ->
         let z = (z ^ (z >> s1)).wrapping_mul(c1) & mask;
         let z = z.wrapping_add(seed1) & mask;
         let z = (z ^ (z >> s2)).wrapping_mul(c2) & mask;
-        (z ^ (z >> s3)) & mask
+        z ^ (z >> s3)
     })
 }

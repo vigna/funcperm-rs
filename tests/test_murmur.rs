@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::HashSet;
 
 use funcperm::murmur;
 use statrs::distribution::{ChiSquared, ContinuousCDF};
@@ -8,7 +8,7 @@ fn test_bijectivity() -> anyhow::Result<()> {
     for &n in &[1u64, 2, 3, 7, 8, 100, 1000, 1 << 16] {
         for seed in 0..3u64.min(n) {
             let perm = murmur(n, seed, seed);
-            let mut seen = BTreeSet::new();
+            let mut seen = HashSet::new();
             for x in 0..n {
                 let y = perm.get(x);
                 assert!(y < n, "output {y} out of range [0..{n})");
@@ -62,7 +62,7 @@ fn test_edge_cases() -> anyhow::Result<()> {
     // Powers of 2: no cycle-walking needed
     for &k in &[4u64, 8, 16, 64, 256] {
         let perm = murmur(k, 0, 0);
-        let mut seen = BTreeSet::new();
+        let mut seen = HashSet::new();
         for x in 0..k {
             let y = perm.get(x);
             assert!(y < k);

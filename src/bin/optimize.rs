@@ -2,7 +2,7 @@
 //!
 //! Uses simulated annealing to find optimal per-k parameters `(s1, s2, s3,
 //! C1, C2)` that minimize avalanche bias, following the methodology of
-//! Stafford and Kagstrom.
+//! Stafford.
 //!
 //! The mixer being optimized has this structure (on k-bit values):
 //! ```text
@@ -78,9 +78,9 @@ const LIB_C2: u64 = 0x94d049bb133111eb;
 /// The five tunable parameters of the mixer for a given bit size k.
 #[derive(Clone, Copy, Debug)]
 struct Params {
-    s1: u32, // first xor-shift amount
-    s2: u32, // second xor-shift amount
-    s3: u32, // final xor-shift amount
+    s1: u32, // first xorshift amount
+    s2: u32, // second xorshift amount
+    s3: u32, // final xorshift amount
     c1: u64, // first multiplicative constant (must be odd)
     c2: u64, // second multiplicative constant (must be odd)
 }

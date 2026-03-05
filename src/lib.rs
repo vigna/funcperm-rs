@@ -58,12 +58,14 @@ impl<B> FuncPerm<B> {
     }
 
     /// Returns the size of the permutation domain.
+    #[inline]
     #[must_use]
     pub const fn len(&self) -> u64 {
         self.n
     }
 
     /// Returns `true` if the permutation domain is empty.
+    #[inline]
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.n == 0
@@ -76,6 +78,7 @@ impl<B: Fn(u64) -> u64> FuncPerm<B> {
     /// # Panics
     ///
     /// Panics if `x` ≥ `n`.
+    #[inline]
     #[must_use]
     pub fn get(&self, x: u64) -> u64 {
         assert!(x < self.n, "x must be less than n");

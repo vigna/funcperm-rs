@@ -5,6 +5,7 @@ edition = "2024"
 description = "Cycle-walking functional permutations on [0..n)"
 license = "Apache-2.0 OR LGPL-2.1-or-later"
 repository = "https://github.com/vigna/funcperm-rs"
+authors = ["Sebastiano Vigna <sebastiano.vigna@unimi.it>"]
 readme = "README.md"
 keywords = ["permutation", "hash", "bijection", "no-std"]
 categories = ["no-std", "algorithms"]
