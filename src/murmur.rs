@@ -19,16 +19,15 @@
 //! random sampling from the permutation space like [Feistel
 //! networks](https://en.wikipedia.org/wiki/Feistel_cipher) using cryptographic
 //! functions do. In exchange, computing the mapping of an element takes just a
-//! few nanoseconds.
+//! dozen nanoseconds.
 
-// The constants in this file were computed by running the following code:
-//
+/// The constants in this file were computed by running the following code:
 ///
 /// ```text
 /// cargo run --bin optimize --features optimize --release -- --iterations 10000 --num-seeds 100 --num-inputs 10000 --sa-seed 0 --random-start
 /// ```
 ///
-/// # Results
+/// Results:
 ///
 /// ```text
 /// k= 1: s=(1,1,1) C1=0x1, C2=0x1  score=1.000000  (was 1.000000)
@@ -229,8 +228,12 @@ const PARAMS: [(u32, u32, u32, u64, u64); 64] = [
 
 /// MurmurHash3-based functional permutation on [0 . . *n*).
 ///
-/// Each pair of seeds will provide a different permutation. Note that
-/// the seeds must be smaller than 2*ᵏ*, where _k_ = ⌈lg _n_⌉.
+/// Each pair of seeds will provide a different permutation.
+/// See the [module-level documentation](self) for details and caveats.
+///
+/// # Panics
+///
+/// Panics if `seed0` or `seed1` is not smaller than 2*ᵏ*, where _k_ = ⌈lg _n_⌉.
 ///
 /// # Examples
 ///
@@ -245,6 +248,7 @@ const PARAMS: [(u32, u32, u32, u64, u64); 64] = [
 ///     seen[x as usize] = true;
 /// }
 /// ```
+#[must_use]
 pub fn murmur(n: u64, seed0: u64, seed1: u64) -> crate::FuncPerm<impl Fn(u64) -> u64 + Copy> {
     let k = if n <= 1 {
         0
@@ -256,11 +260,11 @@ pub fn murmur(n: u64, seed0: u64, seed1: u64) -> crate::FuncPerm<impl Fn(u64) ->
 
     assert!(
         seed0 <= mask,
-        "seed0 must be less than the smaller power of 2 greater than or equal to {n}; got {seed0}",
+        "seed0 must be less than the smallest power of 2 greater than or equal to {n}; got {seed0}",
     );
     assert!(
         seed1 <= mask,
-        "seed1 must be less than the smaller power of 2 greater than or equal to {n}; got {seed1}",
+        "seed1 must be less than the smallest power of 2 greater than or equal to {n}; got {seed1}",
     );
 
     let (s1, s2, s3, c1, c2) = if k == 0 {

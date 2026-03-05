@@ -1,4 +1,4 @@
-//! Optimizer for SplitMix mixer constants.
+//! Optimizer for MurmurHash3 mixer constants.
 //!
 //! Uses simulated annealing to find optimal per-k parameters `(s1, s2, s3,
 //! C1, C2)` that minimize avalanche bias, following the methodology of
@@ -71,7 +71,7 @@ struct Args {
     sa_seed: Option<u64>,
 }
 
-/// The two multiplicative constants from the library's SplitMix mixer.
+/// The two multiplicative constants from the library's MurmurHash3 mixer.
 const LIB_C1: u64 = 0xbf58476d1ce4e5b9;
 const LIB_C2: u64 = 0x94d049bb133111eb;
 
@@ -87,16 +87,12 @@ struct Params {
 
 /// Returns the k-bit mask: 2^k - 1 (all-ones for k = 64).
 fn mask_for_k(k: u32) -> u64 {
-    if k == 64 {
-        u64::MAX
-    } else {
-        (1u64 << k) - 1
-    }
+    if k == 64 { u64::MAX } else { (1u64 << k) - 1 }
 }
 
 /// Apply the mixer with the given parameters.
 ///
-/// This must match the structure of `SplitMix::apply` in `src/lib.rs`,
+/// This must match the structure of the mixer in `src/murmur.rs`,
 /// with parameterized constants and shifts. Since
 /// `(x * C) & mask == (x * (C & mask)) & mask` for power-of-2 moduli,
 /// we can use pre-truncated constants.
@@ -108,7 +104,6 @@ fn apply(x: u64, seed0: u64, seed1: u64, mask: u64, p: &Params) -> u64 {
     let z = (z ^ (z >> p.s2)).wrapping_mul(p.c2) & mask;
     z ^ (z >> p.s3)
 }
-
 
 /// Returns the range of shifts to try: [k/2 - 2, k/2 + 2] clamped to [1, k-1].
 /// At most 5^3 = 125 shift combinations.
@@ -269,9 +264,8 @@ fn evaluate_best_shifts(
             let mut counters = vec![0u64; buf_len];
 
             for &(seed0, seed1) in seed_pairs {
-                let score = evaluate_one(
-                    k_usize, mask, &p, seed0, seed1, num_inputs, &mut counters,
-                );
+                let score =
+                    evaluate_one(k_usize, mask, &p, seed0, seed1, num_inputs, &mut counters);
                 worst_score = worst_score.max(score);
 
                 // Early termination: if this triple's worst-case already
@@ -290,7 +284,13 @@ fn evaluate_best_shifts(
 
     // Find the shift triple with the minimum worst-case score.
     let mut best_score = f64::INFINITY;
-    let mut best_params = Params { s1: lo, s2: lo, s3: lo, c1, c2 };
+    let mut best_params = Params {
+        s1: lo,
+        s2: lo,
+        s3: lo,
+        c1,
+        c2,
+    };
 
     for &(score, s1, s2, s3) in &results {
         if score < best_score {
@@ -370,9 +370,18 @@ fn optimize_k(k: u32, args: &Args, cooling_rate: f64, rng: &mut SmallRng) -> (Pa
 
     eprintln!(
         "k={:2}: start s=({},{},{}) C1=0x{:x}, C2=0x{:x}  score={:.6}{}",
-        k, initial_params.s1, initial_params.s2, initial_params.s3,
-        cur_c1, cur_c2, initial_score,
-        if args.random_start { " (random)" } else { " (library)" }
+        k,
+        initial_params.s1,
+        initial_params.s2,
+        initial_params.s3,
+        cur_c1,
+        cur_c2,
+        initial_score,
+        if args.random_start {
+            " (random)"
+        } else {
+            " (library)"
+        }
     );
 
     let mut current_score = initial_score;
@@ -411,16 +420,26 @@ fn optimize_k(k: u32, args: &Args, cooling_rate: f64, rng: &mut SmallRng) -> (Pa
         if (i + 1) % 1000 == 0 || i + 1 == args.iterations {
             eprintln!(
                 "  iter {:6}/{}: best={:.6}  current={:.6}  T={:.2e}  accepted={}  improved={}",
-                i + 1, args.iterations, best_score, current_score, temp, accepted, improved
+                i + 1,
+                args.iterations,
+                best_score,
+                current_score,
+                temp,
+                accepted,
+                improved
             );
         }
     }
 
     eprintln!(
         "k={:2}: done. accepted={}/{}({:.1}%)  improved={}  score {:.6} -> {:.6}",
-        k, accepted, args.iterations,
+        k,
+        accepted,
+        args.iterations,
         100.0 * accepted as f64 / args.iterations.max(1) as f64,
-        improved, initial_score, best_score
+        improved,
+        initial_score,
+        best_score
     );
 
     (best, best_score, initial_score)
@@ -451,9 +470,9 @@ fn main() {
 
     // Compute cooling rate so that T_final ≈ T₀ * e^{-10} regardless of
     // iteration count. User-specified value takes precedence.
-    let cooling_rate = args.cooling_rate.unwrap_or_else(|| {
-        (-10.0 / args.iterations as f64).exp()
-    });
+    let cooling_rate = args
+        .cooling_rate
+        .unwrap_or_else(|| (-10.0 / args.iterations as f64).exp());
     eprintln!("cooling_rate={cooling_rate:.10}");
 
     let mut results: Vec<(u32, Params, f64, f64)> = Vec::new();
@@ -469,7 +488,10 @@ fn main() {
 
     // Emit a Rust array containing only the optimized range.
     println!();
-    println!("const PARAMS: [(u32, u32, u32, u64, u64); {}] = [", max_k - min_k + 1);
+    println!(
+        "const PARAMS: [(u32, u32, u32, u64, u64); {}] = [",
+        max_k - min_k + 1
+    );
     for &(k, p, _, _) in &results {
         println!("    // k={}", k);
         println!(
