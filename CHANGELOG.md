@@ -2,7 +2,7 @@
 
 ## [0.2.0] - 2025-03-06
 
-### New
+### Changed
 
 - The `murmur` module is no longer public.
 
