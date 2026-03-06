@@ -4,23 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0 OR LGPL-2.1-or-later
  */
 
-//! [MurmurHash3](https://en.wikipedia.org/wiki/MurmurHash)-based functional
-//! permutations.
-//!
-//! The function [`murmur`] returns a functional permutation on [0 . . *n*)
-//! based on a two-round mixing function derived from the
-//! [MurmurHash3](https://en.wikipedia.org/wiki/MurmurHash) finalizer. The
-//! modified finalizer provides a bijection on [0 . . 2*ᵏ*) (where _k_ = ⌈lg
-//! _n_⌉). The function takes two seeds that are injected just before the first
-//! and second xorshift.
-//!
-//! Different seed pairs are expected to yield different permutations with
-//! reasonable statistical uniformity (see the tests), but they cannot guarantee
-//! uniform random sampling from the permutation space like [Feistel
-//! networks](https://en.wikipedia.org/wiki/Feistel_cipher) using cryptographic
-//! functions do. In exchange, computing the mapping of an element takes just a
-//! dozen nanoseconds (see the benchmarks).
-
 /// The constants in this file were computed by running the following code:
 ///
 /// ```text
@@ -226,10 +209,32 @@ const PARAMS: [(u32, u32, u32, u64, u64); 64] = [
     (32, 32, 31, 0x6cde5df80197351, 0x8ba1aec6676989af),
 ];
 
-/// MurmurHash3-based functional permutation on [0 . . *n*).
+/// [MurmurHash3](https://en.wikipedia.org/wiki/MurmurHash)-based functional
+/// permutations.
 ///
-/// Each pair of seeds is expected to provide a different permutation.
-/// See the [module-level documentation](self) for details and caveats.
+/// This function returns a functional permutation on [0 . . *n*) based on a
+/// two-round mixing function derived from the
+/// [MurmurHash3](https://en.wikipedia.org/wiki/MurmurHash) finalizer. The
+/// modified finalizer provides a bijection on [0 . . 2*ᵏ*) (where _k_ = ⌈lg
+/// _n_⌉). The function takes two seeds that are injected just before the first
+/// and second xorshift. Each pair of seeds is expected to provide a different
+/// permutation.
+///
+/// The seeds must be smaller than 2*ᵏ*, where _k_ = ⌈lg _n_⌉. This means, in
+/// particular, that in general you can obtain at most *n*² different
+/// permutations.
+///
+/// Different seed pairs are expected to yield different permutations with
+/// reasonable statistical uniformity, but they cannot guarantee uniform random
+/// sampling from the permutation space like [Feistel
+/// networks](https://crates.io/crates/feistel-permutation-rs) using
+/// cryptographic functions do. In the tests, we check that the *n* functions
+/// with both equal seeds in [0 . . *n*) map √*n* equispaced elements to each of
+/// the *n* outputs uniformly using a χ² test at significance level 0.01 (the
+/// same test on individual positions would fail).
+///
+/// In exchange, computing the mapping of an element takes just a dozen
+/// nanoseconds (see the benchmarks).
 ///
 /// # Panics
 ///

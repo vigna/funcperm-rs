@@ -1,6 +1,6 @@
 [package]
 name = "funcperm"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Cycle-walking functional permutations on [0..n)"
 license = "Apache-2.0 OR LGPL-2.1-or-later"

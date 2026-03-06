@@ -7,7 +7,7 @@
 #![no_std]
 #![doc = include_str!("../README.md")]
 
-pub mod murmur;
+mod murmur;
 pub use murmur::murmur;
 
 /// Cycle-walking functional permutation on [0 . . *n*), given a bijection

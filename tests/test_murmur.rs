@@ -83,8 +83,8 @@ fn chi_squared(counts: &[u64], expected: f64) -> f64 {
         .sum::<f64>()
 }
 
-/// Check that the √n equispaced positions, when mapping using the seeds from 0
-/// to n, produce approximately uniform outputs, using a X² test at
+/// Check that the √n equispaced positions, when mapped using two equal seeds
+/// from 0 to n, produce approximately uniform outputs, using a χ² test at
 /// significance level 0.01.
 fn check_uniformity(n: u64) {
     let sqrt = (n as f64).sqrt().floor() as usize;
@@ -105,7 +105,7 @@ fn check_uniformity(n: u64) {
 
     assert!(
         x2 < critical,
-        "Chi-squared test failed for n={n}, X²={x2:.2}, critical={critical:.2}"
+        "χ² test failed for n={n}, χ²={x2:.2}, critical={critical:.2}"
     );
 }
 
