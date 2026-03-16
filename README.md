@@ -1,5 +1,12 @@
 # FuncPerm
 
+[![crates.io](https://img.shields.io/crates/v/funcperm.svg)](https://crates.io/crates/funcperm)
+[![docs.rs](https://docs.rs/funcperm/badge.svg)](https://docs.rs/funcperm)
+[![rustc](https://img.shields.io/badge/rustc-1.85+-red.svg)](https://rust-lang.github.io/rfcs/2495-min-rust-version.html)
+[![CI](https://github.com/vigna/funcperm-rs/actions/workflows/rust.yml/badge.svg)](https://github.com/vigna/funcperm-rs/actions)
+![license](https://img.shields.io/crates/l/funcperm)
+[![downloads](https://img.shields.io/crates/d/funcperm)](https://crates.io/crates/funcperm)
+
 A `no_std` Rust library for cycle-walking functional permutations on
 \[0 . . *n*).
 
