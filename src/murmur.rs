@@ -215,13 +215,11 @@ const PARAMS: [(u32, u32, u32, u64, u64); 64] = [
 /// This function returns a functional permutation on [0 . . *n*) based on a
 /// two-round mixing function derived from the
 /// [MurmurHash3](https://en.wikipedia.org/wiki/MurmurHash) finalizer. The
-/// modified finalizer provides a bijection on [0 . . 2*ᵏ*) (where _k_ = ⌈lg
-/// _n_⌉). The function takes two seeds that are injected just before the first
+/// modified finalizer provides a bijection on [0 . . 2*ᵏ*), where _k_ = ⌈lg
+/// _n_⌉. The function takes two seeds that are injected just before the first
 /// and second xorshift. Each pair of seeds is expected to provide a different
-/// permutation.
-///
-/// The seeds must be smaller than 2*ᵏ*, where _k_ = ⌈lg _n_⌉. This means, in
-/// particular, that in general you can obtain at most *n*² different
+/// permutation. Note that only the lower _k_ bits of the seeds are used: his
+/// means, in particular, that in general you can obtain at most *n*² different
 /// permutations.
 ///
 /// Different seed pairs are expected to yield different permutations with
@@ -235,10 +233,6 @@ const PARAMS: [(u32, u32, u32, u64, u64); 64] = [
 ///
 /// In exchange, computing the mapping of an element takes just a dozen
 /// nanoseconds (see the benchmarks).
-///
-/// # Panics
-///
-/// Panics if `seed0` or `seed1` is ≥ 2*ᵏ*, where _k_ = ⌈lg _n_⌉.
 ///
 /// # Examples
 ///
@@ -254,7 +248,11 @@ const PARAMS: [(u32, u32, u32, u64, u64); 64] = [
 /// }
 /// ```
 #[must_use]
-pub fn murmur(n: u64, seed0: u64, seed1: u64) -> crate::FuncPerm<impl Fn(u64) -> u64 + Copy> {
+pub fn murmur(
+    n: u64,
+    mut seed0: u64,
+    mut seed1: u64,
+) -> crate::FuncPerm<impl Fn(u64) -> u64 + Copy> {
     let k = if n <= 1 {
         0
     } else {
@@ -263,14 +261,8 @@ pub fn murmur(n: u64, seed0: u64, seed1: u64) -> crate::FuncPerm<impl Fn(u64) ->
 
     let mask = if k == 64 { u64::MAX } else { (1u64 << k) - 1 };
 
-    assert!(
-        seed0 <= mask,
-        "seed0 must be less than the smallest power of 2 greater than or equal to {n}; got {seed0}",
-    );
-    assert!(
-        seed1 <= mask,
-        "seed1 must be less than the smallest power of 2 greater than or equal to {n}; got {seed1}",
-    );
+    seed0 &= mask;
+    seed1 &= mask;
 
     let (s1, s2, s3, c1, c2) = if k == 0 {
         (1, 1, 1, 1u64, 1u64)

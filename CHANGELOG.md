@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1] - 2026-04-13
+
+### Changed
+
+- The seeds for the `murmur` function are now automatically masked to the right
+  number of bits.
+
 ## [0.2.0] - 2025-03-06
 
 ### Changed
